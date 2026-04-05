@@ -75,7 +75,7 @@ from paddle_quantum.qpp.angles import qpp_angle_approximator
 # ============================================================
 
 FUNC_NAME = "STEP"   # <-- change to "ReLU" or "SELU" as needed
-ANGLE_L   = 180    # <-- change to desired L
+ANGLE_L   = 360    # <-- change to desired L
 
 # ============================================================
 # Derived settings -- do not change these manually

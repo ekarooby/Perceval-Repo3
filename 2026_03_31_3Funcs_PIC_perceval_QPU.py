@@ -47,19 +47,28 @@
 #   z_slos               : local SLOS reference (if available)
 #
 # WHAT CHANGED FROM SLOS CODE:
-#   1. Added token setup:      pcvl.RemoteConfig.set_token(...)
-#   2. Replaced Processor:     pcvl.Processor("SLOS") ->
+#   1.  Added token setup:     pcvl.RemoteConfig.set_token(...)
+#   2.  Replaced Processor:    pcvl.Processor("SLOS") ->
 #                              pcvl.RemoteProcessor("qpu:belenos")
-#   3. Added max_shots_per_call to Sampler (required for remote)
-#   4. Changed job execution:  sample_count(N_SHOTS) ->
+#   3.  Added max_shots_per_call to Sampler (required for remote)
+#   4.  Changed job execution: sample_count(N_SHOTS) ->
 #                              sample_count.execute_async(N_SHOTS)
-#   5. Added progress polling loop (async job, not instant)
-#   6. Added job ID saving (so you can resume if disconnected)
-#   7. Reduced x_values: 100 -> 25 (saves QPU credits)
-#   8. All labels changed to "experimental" / "QPU"
-#   9. Saved results use tagged filenames (no overwriting)
+#   5.  Added progress polling loop (async job, not instant)
+#   6.  Added job ID saving (so you can resume if disconnected)
+#   7.  Reduced x_values: 100 -> 25 (saves QPU credits)
+#   8.  All labels changed to "experimental" / "QPU"
+#   9.  Saved results use tagged filenames (no overwriting)
 #   10. Added credit estimation before running
-#   13. Added ANGLE_METHOD: "nlft" or "pq"
+#   11. Added ANGLE_METHOD: "nlft" or "pq"
+#   12. Fix 1: Auto-retry up to MAX_RETRIES times if result is
+#              None, then resubmit job if all retries fail
+#   13. Fix 2: NaN instead of 0.0 for truly missing points
+#              so they are invisible in the plot (not fake zeros)
+#              np.nanmean used for MSE so NaN excluded from calc
+#   14. Fix 3: Network timeout handling -- if get_results() raises
+#              a network exception (ReadTimeout, ConnectionError,
+#              etc.), catch it, wait 30s, set results=None so
+#              Fix 1 retry loop automatically tries again
 #
 # HOW TO RUN:
 #   1. Go to cloud.quandela.com and get your API token
@@ -87,7 +96,7 @@ import os
 # Step 1: Token and QPU setup
 # ============================================================
 
-MY_TOKEN = "YOUR_API_TOKEN_HERE"   # <-- replace with your token
+MY_TOKEN = "_T_eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpZCI6MjU5MiwiZXhwIjoxODA2NTkwNjc1LjE4NjQ3NDN9.eCJCJNcF7BqyUtKiUSaOPK1RM0Nd42B-2UXwH0IIRiYy0TOqi9eQWcUM3049KIkcjgyKkHT-xyIxzoqzmuxyaQ"   # <-- replace with your token
 QPU_NAME = "qpu:belenos"           # <-- replace if using a different QPU
 
 # ============================================================
@@ -101,8 +110,24 @@ QPU_NAME = "qpu:belenos"           # <-- replace if using a different QPU
 # ============================================================
 
 FUNC_NAME    = "STEP"   # <-- change to "ReLU" or "SELU" as needed
-ANGLE_L      = 15       # <-- change to match the angle file you want to load
-ANGLE_METHOD = "nlft"   # <-- "nlft" or "pq"
+ANGLE_L      = 360       # <-- change to match the angle file you want to load
+ANGLE_METHOD = "pq"   # <-- "nlft" or "pq" # In Repo3, I have just ran the code with "pq"
+
+# ============================================================
+# Fix 1 setting: maximum number of retries per x point
+#
+# FIX 1 -- AUTO RETRY:
+#   On real QPU hardware, a job sometimes returns None even
+#   when it shows status SUCCESS. This happens due to transient
+#   network glitches, QPU buffer issues, or cloud server timeouts.
+#   Instead of immediately giving up and recording a fake zero,
+#   Fix 1 retries get_results() up to MAX_RETRIES times with a
+#   10-second wait between each attempt. If all retries fail,
+#   it resubmits the entire job to the QPU from scratch.
+#   This prevents missing data points caused by transient failures.
+# ============================================================
+
+MAX_RETRIES = 3   # Fix 1: number of retry attempts before resubmitting
 
 # ============================================================
 # Derived settings -- do not change these manually
@@ -123,10 +148,10 @@ N_approx   = 100                 # sharpness of arctan surrogate (used for STEP)
 angle_file_theta = f"theta_{FUNC_LOWER}_{ANGLE_METHOD}_L{ANGLE_L}.npy"
 angle_file_phi   = f"phi_{FUNC_LOWER}_{ANGLE_METHOD}_L{ANGLE_L}.npy"
 
-theta_opt = np.load(angle_file_theta)
-phi_opt   = np.load(angle_file_phi)
+theta = np.load(angle_file_theta)
+phi   = np.load(angle_file_phi)
 
-L = len(theta_opt) - 1
+L = len(theta) - 1
 print(f"Loaded QSP angles: FUNC={FUNC_NAME}  METHOD={ANGLE_METHOD}  L={L}")
 print(f"  from: {angle_file_theta}")
 
@@ -217,14 +242,15 @@ def build_qsp_pic(theta_arr, phi_arr, x_val, L):
 # ============================================================
 
 N_SHOTS  = 5000
-x_values = np.linspace(-np.pi, np.pi, 25)
+x_values = np.linspace(-np.pi, np.pi, 100)
 N_X      = len(x_values)
 
 FILE_TAG = f"{FUNC_NAME}_L{L}_N{N_SHOTS}_x{N_X}"
 print(f"\nFile tag for this run  : {FILE_TAG}")
 
-# SLOS tag -- adjust N and x to match your SLOS run, or set None
-SLOS_TAG = f"{FUNC_NAME}_L{L}_N100000_x100"   # <-- or set to None
+# SLOS_TAG automatically matches N_SHOTS and N_X above
+# so SLOS files are always loaded from a matching run
+SLOS_TAG = f"{FUNC_NAME}_L{L}_N{N_SHOTS}_x{N_X}"
 print(f"SLOS tag for comparison: {SLOS_TAG}")
 
 # ============================================================
@@ -247,7 +273,7 @@ print(f"  Max photons    : {specs['constraints']['max_photon_count']}")
 print(f"  Our circuit    : 2 modes, 1 photon  -> OK")
 
 print(f"\n  Estimating QPU shots needed...")
-circuit_test = build_qsp_pic(theta_opt, phi_opt, 0.0, L)
+circuit_test = build_qsp_pic(theta, phi, 0.0, L)
 remote_proc_test.set_circuit(circuit_test)
 remote_proc_test.with_input(pcvl.BasicState([1, 0]))
 remote_proc_test.min_detected_photons_filter(1)
@@ -262,23 +288,22 @@ print("=" * 60)
 # ============================================================
 # Step 5: Run experimental sweep on QPU
 #
-# CHANGED FROM SLOS: the entire execution block is different.
+# Fix 2: initialize arrays with NaN instead of zeros
 #
-# SLOS:   Sampler(local_proc)
-#         results = sampler.sample_count(N_SHOTS)  [blocking, instant]
-#
-# QPU:    Sampler(remote_proc, max_shots_per_call=N_SHOTS)  [required!]
-#         job = sampler.sample_count.execute_async(N_SHOTS) [non-blocking]
-#         poll job.is_complete with time.sleep(5)           [wait loop]
-#         results = job.get_results()
-#
-# JOB IDs ARE SAVED to job_ids_{FILE_TAG}.txt so you can
-# resume any job if your connection drops mid-run.
+# FIX 2 -- NaN INSTEAD OF ZERO:
+#   If Fix 1 exhausts all retries and still gets no result,
+#   the data point is genuinely missing. Instead of storing 0.0
+#   (which creates a fake outlier dot on the plot at Z=0),
+#   Fix 2 stores NaN (Not a Number). Matplotlib automatically
+#   skips NaN values when plotting, so the missing point simply
+#   disappears from the figure rather than appearing as a wrong
+#   value. np.nanmean() is used later so NaN points are excluded
+#   from the MSE calculation as well.
 # ============================================================
 
-z_experimental  = np.zeros(N_X)
-p0_experimental = np.zeros(N_X)
-p1_experimental = np.zeros(N_X)
+z_experimental  = np.full(N_X, np.nan)   # Fix 2: NaN not 0.0
+p0_experimental = np.full(N_X, np.nan)   # Fix 2: NaN not 0.0
+p1_experimental = np.full(N_X, np.nan)   # Fix 2: NaN not 0.0
 
 job_id_file = f"job_ids_{FILE_TAG}.txt"
 with open(job_id_file, "w") as f:
@@ -286,12 +311,18 @@ with open(job_id_file, "w") as f:
     f.write(f"File tag     : {FILE_TAG}\n")
     f.write(f"Angle method : {ANGLE_METHOD}\n")
     f.write(f"x points     : {N_X}\n")
-    f.write(f"N_SHOTS      : {N_SHOTS}\n\n")
+    f.write(f"N_SHOTS      : {N_SHOTS}\n")
+    f.write(f"Fix 1 retries: {MAX_RETRIES}\n")
+    f.write(f"Fix 2 NaN    : enabled\n")
+    f.write(f"Fix 3 timeout: enabled (30s wait on network error)\n\n")
 
 print(f"\nStarting QPU experimental sweep:")
 print(f"  Function      : {FUNC_NAME}")
 print(f"  Angle method  : {ANGLE_METHOD}")
 print(f"  {N_X} x values, {N_SHOTS} shots each")
+print(f"  Fix 1 active  : up to {MAX_RETRIES} retries + resubmit per x point")
+print(f"  Fix 2 active  : missing points stored as NaN (not 0.0)")
+print(f"  Fix 3 active  : network timeout caught, waits 30s and retries")
 print(f"  File tag        : {FILE_TAG}")
 print(f"  Job IDs saved to: {job_id_file}")
 print("=" * 60)
@@ -300,7 +331,7 @@ for i, x_val in enumerate(x_values):
 
     print(f"\n  [{i+1:2d}/{N_X}] x = {x_val:+.4f} rad")
 
-    circuit = build_qsp_pic(theta_opt, phi_opt, x_val, L)
+    circuit = build_qsp_pic(theta, phi, x_val, L)
 
     remote_proc = pcvl.RemoteProcessor(QPU_NAME)
     remote_proc.set_circuit(circuit)
@@ -321,14 +352,79 @@ for i, x_val in enumerate(x_values):
     print(f" done.")
     print(f"    Job status: {job.status()}")
 
-    results = job.get_results()
+    # --------------------------------------------------------
+    # Fix 1 -- AUTO RETRY:
+    #   Try get_results() up to MAX_RETRIES times.
+    #   Wait 10 seconds between each attempt.
+    #   If all retries fail, resubmit the entire job once more.
+    #
+    # Fix 3 -- NETWORK TIMEOUT HANDLING:
+    #   get_results() is wrapped in try/except so that network
+    #   errors (ReadTimeout, ConnectionError, SSLError, etc.)
+    #   are caught gracefully. On error, results is set to None
+    #   and Fix 1's retry loop automatically tries again after
+    #   a 30-second wait. This prevents the entire run from
+    #   crashing due to a transient network dropout.
+    # --------------------------------------------------------
+    results = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            results = job.get_results()
+        except Exception as e:
+            # Fix 3: catch any network error, wait, then retry
+            print(f"    Fix 3: network error ({e.__class__.__name__})"
+                  f" -- waiting 30s before retry "
+                  f"{attempt+1}/{MAX_RETRIES}...")
+            time.sleep(30)
+            results = None
+        if results is not None and results.get('results') is not None:
+            break   # Fix 1: got valid results, stop retrying
+        if results is None or results.get('results') is None:
+            print(f"    Fix 1: result was None, retry "
+                  f"{attempt+1}/{MAX_RETRIES} in 10s...")
+            time.sleep(10)
 
+    # Fix 1: if all retries failed, resubmit the job entirely
     if results is None or results.get('results') is None:
-        print(f"    WARNING: no results returned for x={x_val:.4f} -- skipping")
-        z_experimental[i]  = 0.0
-        p0_experimental[i] = 0.0
-        p1_experimental[i] = 0.0
-        continue
+        print(f"    Fix 1: all {MAX_RETRIES} retries failed "
+              f"-- resubmitting job to QPU")
+        job2 = sampler.sample_count.execute_async(N_SHOTS)
+        with open(job_id_file, "a") as f:
+            f.write(f"  RESUBMIT x[{i:02d}] job_id = {job2.id}\n")
+        print(f"    Fix 1: resubmitted. New job ID: {job2.id}")
+        print(f"    Fix 1: waiting for resubmitted job",
+              end="", flush=True)
+        while not job2.is_complete:
+            time.sleep(5)
+            print(".", end="", flush=True)
+        print(" done.")
+        # Fix 3: also protect the resubmitted job's get_results()
+        try:
+            results = job2.get_results()
+        except Exception as e:
+            print(f"    Fix 3: network error on resubmit "
+                  f"({e.__class__.__name__}) -- waiting 30s...")
+            time.sleep(30)
+            try:
+                results = job2.get_results()
+            except Exception as e2:
+                print(f"    Fix 3: second network error "
+                      f"({e2.__class__.__name__}) -- storing NaN")
+                results = None
+
+    # --------------------------------------------------------
+    # Fix 2 -- NaN FOR TRULY MISSING DATA:
+    #   If Fix 1 exhausted all retries AND the resubmitted job
+    #   also returned None, the data point is genuinely missing.
+    #   Store NaN instead of 0.0 so matplotlib skips it in the
+    #   plot (no fake outlier dot at Z=0 in the figure).
+    #   The arrays were initialized with NaN above so no action
+    #   is needed here -- just skip to the next x point.
+    # --------------------------------------------------------
+    if results is None or results.get('results') is None:
+        print(f"    Fix 2: storing NaN for x={x_val:.4f} "
+              f"-- missing point will be invisible in plot")
+        continue   # Fix 2: arrays already contain NaN at index i
 
     counts      = dict(results['results'])
     count_mode0 = counts.get(pcvl.BasicState([1, 0]), 0)
@@ -353,6 +449,11 @@ for i, x_val in enumerate(x_values):
 print("\n" + "=" * 60)
 print("Experimental sweep complete.")
 
+n_valid   = int(np.sum(~np.isnan(z_experimental)))
+n_missing = int(np.sum( np.isnan(z_experimental)))
+print(f"  Valid data points   : {n_valid} / {N_X}")
+print(f"  Missing data points : {n_missing} / {N_X}  (NaN -- invisible in plot)")
+
 # ============================================================
 # Step 6: Save experimental results
 # ============================================================
@@ -365,21 +466,56 @@ print(f"\nExperimental results saved with tag: {FILE_TAG}")
 
 # ============================================================
 # Step 7: Compute reference curves for comparison
+#
+# Three reference curves are computed:
+#   f_classical         : pure numpy matrix math, no Perceval
+#                         Bu et al. circuit convention
+#   f_perceval_analytic : Perceval compute_unitary(), exact
+#   z_slos              : SLOS local simulation (if available)
 # ============================================================
 
 x_fine      = np.linspace(-np.pi, np.pi, 300)
 f_surrogate = surrogate_func(x_fine)
 f_true      = true_func(x_fine)
 
-print("\nComputing Perceval analytic reference...")
+# ---- Classical reference (pure numpy, no Perceval) --------
+# Implements the same Bu et al. circuit convention as the QPU
+# circuit but using pure matrix multiplication.
+# A(t,p) = Ry(t) @ Rz(p)
+# W(x)   = A(t0,p0) * prod_{j=1}^{L} [ Rz(x) * A(tj,pj) ]
+# Z       = |psi[0]|^2 - |psi[1]|^2
+
+def Ry_mat(t):
+    c, s = np.cos(t/2), np.sin(t/2)
+    return np.array([[c, -s],[s, c]], dtype=complex)
+
+def Rz_mat(p):
+    return np.array([[np.exp(-1j*p/2), 0],[0, np.exp(1j*p/2)]], dtype=complex)
+
+def A_mat(t, p):
+    return Ry_mat(t) @ Rz_mat(p)
+
+def classical_qsp(theta_arr, phi_arr, x_val, L):
+    """Pure numpy QSP circuit -- Bu et al. convention, no Perceval."""
+    W = A_mat(theta_arr[0], phi_arr[0])
+    for j in range(1, L + 1):
+        W = A_mat(theta_arr[j], phi_arr[j]) @ Rz_mat(x_val) @ W
+    psi = W @ np.array([1.0, 0.0])
+    return abs(psi[0])**2 - abs(psi[1])**2
+
+print("\nComputing classical reference (pure numpy)...")
+f_classical = np.array([classical_qsp(theta, phi, x, L) for x in x_values])
+
+# ---- Perceval analytic reference --------------------------
+print("Computing Perceval analytic reference...")
 f_perceval_analytic = np.zeros(N_X)
 for i, x_val in enumerate(x_values):
-    circuit = build_qsp_pic(theta_opt, phi_opt, x_val, L)
+    circuit = build_qsp_pic(theta, phi, x_val, L)
     U   = np.array(circuit.compute_unitary())
     psi = U @ np.array([1.0, 0.0])
     f_perceval_analytic[i] = abs(psi[0])**2 - abs(psi[1])**2
 
-# Load SLOS results for 3-way comparison (matched by SLOS_TAG)
+# ---- Load SLOS results ------------------------------------
 slos_available = False
 if SLOS_TAG is not None:
     slos_x_file = f"x_values_{SLOS_TAG}.npy"
@@ -395,16 +531,30 @@ if SLOS_TAG is not None:
 
 # ============================================================
 # Step 8: MSE report
+#
+# np.nanmean is used instead of np.mean so that NaN points
+# (Fix 2) are automatically excluded from the MSE calculation.
+# This gives a fair MSE over valid data points only.
 # ============================================================
 
-mse_exp_vs_analytic  = np.mean((z_experimental - f_perceval_analytic)**2)
-mse_exp_vs_surrogate = np.mean((z_experimental - surrogate_func(x_values))**2)
-mse_exp_vs_true      = np.mean((z_experimental - true_func(x_values))**2)
+mse_exp_vs_analytic  = np.nanmean((z_experimental - f_perceval_analytic)**2)
+mse_exp_vs_classical = np.nanmean((z_experimental - f_classical)**2)
+mse_exp_vs_surrogate = np.nanmean((z_experimental - surrogate_func(x_values))**2)
+mse_exp_vs_true      = np.nanmean((z_experimental - true_func(x_values))**2)
+
+if slos_available:
+    # interpolate SLOS to same x grid as experimental
+    z_slos_interp = np.interp(x_values, x_slos, z_slos)
+    mse_exp_vs_slos = np.nanmean((z_experimental - z_slos_interp)**2)
+else:
+    mse_exp_vs_slos = float('nan')
 
 print(f"\n========== Experimental MSE Report  [{FILE_TAG}] ==========")
 print(f"  Angle method                              : {ANGLE_METHOD}")
+print(f"  Valid points used for MSE                 : {n_valid} / {N_X}")
 print(f"  MSE experimental vs Perceval analytic     : {mse_exp_vs_analytic:.4f}")
-print(f"    (hardware noise + imperfections)")
+print(f"  MSE experimental vs Classical results     : {mse_exp_vs_classical:.4f}")
+print(f"  MSE experimental vs SLOS                  : {mse_exp_vs_slos:.4f}")
 print(f"  MSE experimental vs surrogate             : {mse_exp_vs_surrogate:.4f}")
 print(f"  MSE experimental vs true {FUNC_NAME:<5}           : {mse_exp_vs_true:.4f}")
 print(f"=====================================================")
@@ -416,8 +566,8 @@ print(f"=====================================================")
 ncols = 3 if slos_available else 2
 fig, axes = plt.subplots(1, ncols, figsize=(6*ncols, 5))
 fig.suptitle(
-    f"QSP {FUNC_NAME} -- Experimental Results  "
-    f"QPU: {QPU_NAME}  L={L}  x={N_X}  N_shots={N_SHOTS}  [{ANGLE_METHOD} angles]",
+    f"Experiments: Paddle Quantum  {FUNC_NAME}  L={L}  "
+    f"N_shots={N_SHOTS}  N_x={N_X}",
     fontsize=12, fontweight='bold'
 )
 
@@ -425,13 +575,14 @@ xt = [-np.pi, 0, np.pi]
 xl = [r"$-\pi$", r"$0$", r"$\pi$"]
 
 # Left panel: experimental results
+# Fix 2: NaN points automatically skipped by matplotlib
 ax = axes[0]
 ax.plot(x_fine,   f_true,              'k-',  lw=2.5,
         label=f"True {FUNC_NAME}",                   zorder=3)
 ax.plot(x_fine,   f_surrogate,         'g--', lw=1.5,
         label="surrogate",                           zorder=2)
 ax.plot(x_values, f_perceval_analytic, 'r-',  lw=1.5,
-        label="Perceval analytic  Z=p0-p1",          zorder=4)
+        label="Perceval analytic",                   zorder=4)
 ax.plot(x_values, z_experimental,      'b.',  ms=10,
         label=f"Experimental  Z=p0-p1\n"
               f"  MSE vs surrogate={mse_exp_vs_surrogate:.4f}\n"
@@ -442,13 +593,12 @@ ax.set_ylim([-1.3, 1.3])
 ax.set_xticks(xt); ax.set_xticklabels(xl, fontsize=11)
 ax.set_xlabel(r"$x$", fontsize=12)
 ax.set_ylabel("Z = p0 - p1", fontsize=12)
-ax.set_title(f"Experimental QPU results  {FUNC_NAME}  L={L}  [{ANGLE_METHOD}]",
-             fontsize=11)
+ax.set_title(f"Experiments: Paddle Quantum  {FUNC_NAME}  L={L}", fontsize=11)
 ax.legend(fontsize=8)
 ax.grid(True, alpha=0.3)
 
 # Middle panel: residual experimental vs Perceval analytic
-# Shows hardware noise (photon loss, imperfect BS, etc.)
+# Fix 2: NaN points produce no dot and no line segment here
 ax2 = axes[1]
 diff_exp = z_experimental - f_perceval_analytic
 ax2.plot(x_values, diff_exp, color='darkred', lw=1.5, marker='.', ms=8,
@@ -456,33 +606,40 @@ ax2.plot(x_values, diff_exp, color='darkred', lw=1.5, marker='.', ms=8,
                f"  MSE={mse_exp_vs_analytic:.4f}\n"
                f"  (hardware noise + imperfections)")
 ax2.axhline(0, color='k', lw=0.8, linestyle='--')
-ax2.fill_between(x_values, diff_exp, alpha=0.2, color='darkred')
+ax2.fill_between(x_values, diff_exp,
+                 where=~np.isnan(diff_exp),   # Fix 2: skip NaN in fill
+                 alpha=0.2, color='darkred')
 ax2.set_xlim([-np.pi, np.pi])
 ax2.set_xticks(xt); ax2.set_xticklabels(xl, fontsize=11)
 ax2.set_xlabel(r"$x$", fontsize=12)
 ax2.set_ylabel("Residual", fontsize=12)
-ax2.set_title(f"Experimental vs Perceval analytic  ({FUNC_NAME})\n"
+ax2.set_title(f"Experiments vs Perceval analytics  ({FUNC_NAME}  L={L})\n"
               "(shows real hardware noise)", fontsize=11)
 ax2.legend(fontsize=8)
 ax2.grid(True, alpha=0.3)
 
-# Right panel: 3-way comparison (only if SLOS results loaded)
+# Right panel: comparison with SLOS, Perceval analytic, Classical
 if slos_available:
     ax3 = axes[2]
     ax3.plot(x_fine,   f_true,              'k-',  lw=2.5,
              label=f"True {FUNC_NAME}",            zorder=3)
+    ax3.plot(x_values, f_classical,         'm-',  lw=1.5,
+             label=f"Classical  MSE={mse_exp_vs_classical:.4f}",
+             zorder=4)
     ax3.plot(x_values, f_perceval_analytic, 'g--', lw=2,
-             label="Perceval analytic",             zorder=4)
+             label=f"Perceval analytic  MSE={mse_exp_vs_analytic:.4f}",
+             zorder=5)
     ax3.plot(x_slos,   z_slos,              'b.',  ms=6,
-             label=f"SLOS  ({SLOS_TAG})",           zorder=5)
+             label=f"SLOS  MSE={mse_exp_vs_slos:.4f}",
+             zorder=6)
     ax3.plot(x_values, z_experimental,      'r.',  ms=10,
-             label=f"Experimental  ({FILE_TAG})",   zorder=6)
+             label=f"Experimental",                zorder=7)
     ax3.set_xlim([-np.pi, np.pi])
     ax3.set_ylim([-1.3, 1.3])
     ax3.set_xticks(xt); ax3.set_xticklabels(xl, fontsize=11)
     ax3.set_xlabel(r"$x$", fontsize=12)
-    ax3.set_title(f"Experimental vs SLOS vs Analytic  ({FUNC_NAME})\n"
-                  "(3-way comparison)", fontsize=11)
+    ax3.set_title(f"Experiments vs SLOS, Perceval analytics,\n"
+                  f"Classical results  ({FUNC_NAME}  L={L})", fontsize=11)
     ax3.legend(fontsize=8)
     ax3.grid(True, alpha=0.3)
 
@@ -526,6 +683,12 @@ changes = [
      "SLOS files loaded by SLOS_TAG -- must match SLOS run tag"),
     ("13", "Angle method",
      "Added ANGLE_METHOD: 'nlft' or 'pq' -- controls which angles loaded"),
+    ("14", "Fix 1: Auto-retry",
+     f"Retries get_results() up to {MAX_RETRIES}x, resubmits if still None"),
+    ("15", "Fix 2: NaN not zero",
+     "Missing points stored as NaN -- invisible in plot, excluded from MSE"),
+    ("16", "Fix 3: Network timeout",
+     "get_results() wrapped in try/except -- waits 30s on network error"),
 ]
 for num, name, desc in changes:
     print(f"  {num:>2}. {name:<25} {desc}")

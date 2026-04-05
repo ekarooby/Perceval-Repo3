@@ -1,0 +1,11 @@
+QSP STEP QPU Experiment -- qpu:belenos
+File tag     : STEP_L5_N5000_x3
+Angle method : pq
+x points     : 3
+N_SHOTS      : 5000
+Fix 1 retries: 3
+Fix 2 NaN    : enabled
+
+x[00] = -3.1416  job_id = ec83c193-6678-4ed5-b4c0-772d2d8946e0
+x[01] = +0.0000  job_id = d450e687-1c2f-4d7d-9691-2f7dc071d981
+x[02] = +3.1416  job_id = bcf8dba1-b804-4a61-a804-afb2ee823a24

@@ -1,0 +1,39 @@
+QSP STEP QPU Experiment -- qpu:belenos
+File tag     : STEP_L24_N5000_x30
+Angle method : pq
+x points     : 30
+N_SHOTS      : 5000
+Fix 1 retries: 3
+Fix 2 NaN    : enabled
+Fix 3 timeout: enabled (30s wait on network error)
+
+x[00] = -3.1416  job_id = 0fc20361-e997-4b47-8610-6b939ae5c944
+x[01] = -2.9249  job_id = 51cd5d6d-18c8-43a9-808f-1305c7b42cd0
+x[02] = -2.7083  job_id = 40b085d0-40d9-4884-a18c-0c1cd43df9c2
+x[03] = -2.4916  job_id = fe379a61-4999-47aa-b486-a79d6f159e21
+x[04] = -2.2749  job_id = 7eeeb0a8-9626-4d01-bdf2-4250af74f7a4
+x[05] = -2.0583  job_id = 8248ab87-ab32-4a70-803e-aff440fe337a
+x[06] = -1.8416  job_id = 635f8fd2-372f-4204-97aa-e4e39e8b8142
+x[07] = -1.6250  job_id = e9576161-2270-499a-8ac8-7ec3fce346d5
+x[08] = -1.4083  job_id = 8e52566e-15c1-4489-a03a-5408ca07ded9
+x[09] = -1.1916  job_id = c5712481-3700-4989-83e3-41348197a7fc
+x[10] = -0.9750  job_id = 30d599d7-29b4-4087-9de6-2fcabfd57a5d
+x[11] = -0.7583  job_id = dfaa608e-de1d-4adb-9e6d-02c4fdc42273
+x[12] = -0.5417  job_id = 14bbdc07-d578-45de-b764-81a56b7606f2
+x[13] = -0.3250  job_id = f0ec4fba-ecfa-418a-ad68-35b252c8930c
+x[14] = -0.1083  job_id = 3fd82c86-229a-4adf-adc4-f361ab0a334f
+x[15] = +0.1083  job_id = e532f36a-8e7b-4c1c-bae7-4aeae4cb06eb
+x[16] = +0.3250  job_id = 05f78e8f-9b88-4084-8a69-cf9941fc9bb5
+x[17] = +0.5417  job_id = 649aaa4e-7ffd-46f3-b1bd-01ce346f30a6
+x[18] = +0.7583  job_id = ce5c98f7-fad5-4c89-901d-51eed099522d
+x[19] = +0.9750  job_id = f9264d1f-fe67-4be6-87b7-8199fa6b74b8
+x[20] = +1.1916  job_id = 60abedac-979c-4b67-8231-7e0ce6e0fdac
+x[21] = +1.4083  job_id = e288c93e-0fe6-454d-86c6-d4afe1072afa
+x[22] = +1.6250  job_id = 1e6a937c-f7f6-4e07-98bc-0c99298739fc
+x[23] = +1.8416  job_id = 754aba44-1ca3-4f11-80b8-7447da8a0ed6
+x[24] = +2.0583  job_id = db12e1dc-3eab-47e0-be83-b46a5c4ea91d
+x[25] = +2.2749  job_id = 273ce678-9860-46db-b630-75a14f207fd9
+x[26] = +2.4916  job_id = 79372acc-40b2-4bfc-9caf-245ac6f83365
+x[27] = +2.7083  job_id = 2d0954f8-cb8f-4d68-8ba1-9b59fd770e69
+x[28] = +2.9249  job_id = 0770e26f-65ef-49c7-b339-2b25e0f770b8
+x[29] = +3.1416  job_id = 05300298-a8c4-4b26-939e-e6fd24b6ca3f

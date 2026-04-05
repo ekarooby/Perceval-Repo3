@@ -73,7 +73,7 @@ from perceval.algorithm import Sampler
 # ============================================================
 
 FUNC_NAME    = "STEP"   # <-- change to "ReLU" or "SELU" as needed
-ANGLE_L      = 5       # <-- change to match the angle file you want to load
+ANGLE_L      = 360      # <-- change to match the angle file you want to load
 ANGLE_METHOD = "pq"   # <-- "nlft" or "pq"
 
 # ============================================================
@@ -81,7 +81,7 @@ ANGLE_METHOD = "pq"   # <-- "nlft" or "pq"
 # ============================================================
 
 FUNC_LOWER = FUNC_NAME.lower()   # "step", "relu", "selu" -- used in filenames
-N_approx   = 100                 # sharpness of arctan surrogate (used for STEP)
+N_approx   = 100                # sharpness of arctan surrogate (used for STEP)
 
 # ============================================================
 # Step 1: Load QSP angles
